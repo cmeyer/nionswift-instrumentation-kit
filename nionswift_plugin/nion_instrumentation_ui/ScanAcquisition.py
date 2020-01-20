@@ -8,6 +8,7 @@ import threading
 import typing
 
 # local libraries
+from nion.data import DataAndMetadata
 from nion.data import xdata_1_0 as xd
 from nion.swift import Facade
 from nion.swift import HistogramPanel
@@ -25,41 +26,30 @@ from . import HardwareSourceChoice
 _ = gettext.gettext
 
 
-def create_and_display_data_item(document_window, data_and_metadata, scan_data_list, camera_hardware_source):
-    camera_hardware_source_id = camera_hardware_source._hardware_source.hardware_source_id
-
-    # data_item = library.get_data_item_for_hardware_source(scan_hardware_source, channel_id=camera_hardware_source_id, processor_id="summed", create_if_needed=True, large_format=True)
-
-    data_item = Facade.DataItem(DataItem.DataItem(large_format=True))
+def create_and_display_data_item(document_window, data_and_metadata: DataAndMetadata.DataAndMetadata) -> None:
+    # create the data item; large format if it's a collection
+    data_item = Facade.DataItem(DataItem.DataItem(large_format=data_and_metadata.is_collection))
     document_window.library._document_model.append_data_item(data_item._data_item)
+
+    # update the session id
     data_item._data_item.session_id = document_window.library._document_model.session_id
 
-    data_item.title = _("Spectrum Image {}".format(" x ".join([str(d) for d in data_and_metadata.dimensional_shape])))
+    # set the title
+    channel_name = data_and_metadata.metadata.get("hardware_source", dict()).get("channel_name", data_and_metadata.metadata.get("hardware_source", dict()).get("hardware_source_name", "Data"))
+    dimension_str = (" " + " x ".join([str(d) for d in data_and_metadata.collection_dimension_shape])) if data_and_metadata.is_collection else str()
+    data_item.title = f"{_('Spectrum Image')}{dimension_str} ({channel_name})"
+
+    # if the last dimension is 1, squeeze the data (1D SI)
+    if data_and_metadata.data_shape[0] == 1:
+        data_and_metadata = xd.squeeze(data_and_metadata)
+
     # the data item should not have any other 'clients' at this point; so setting the
     # data and metadata will immediately unload the data (and write to disk). this is important,
     # because the data (up to this point) can be shared data from the DLL.
     data_item.set_data_and_metadata(data_and_metadata)
-    # assert not data_item._data_item.is_data_loaded
+
     # now to display it will reload the data (presumably from an HDF5 or similar on-demand format).
     document_window.display_data_item(data_item)
-    for scan_data_and_metadata in scan_data_list:
-        scan_channel_id = scan_data_and_metadata.metadata["hardware_source"]["channel_id"]
-        scan_channel_name = scan_data_and_metadata.metadata["hardware_source"]["channel_name"]
-        channel_id = camera_hardware_source_id + "_" + scan_channel_id
-
-        # data_item = library.get_data_item_for_hardware_source(scan_hardware_source, channel_id=channel_id, create_if_needed=True)
-
-        data_item = Facade.DataItem(DataItem.DataItem())
-        document_window.library._document_model.append_data_item(data_item._data_item)
-        data_item._data_item.session_id = document_window.library._document_model.session_id
-
-        data_item.title = "{} ({})".format(_("Spectrum Image"), scan_channel_name)
-
-        if scan_data_and_metadata.data_shape[0] == 1:
-            scan_data_and_metadata = xd.squeeze(scan_data_and_metadata)
-
-        data_item.set_data_and_metadata(scan_data_and_metadata)
-        document_window.display_data_item(data_item)
 
 
 class SequenceState(enum.Enum):
@@ -165,10 +155,8 @@ class ScanAcquisitionController:
 
                     def create_and_display_data_item_task():
                         # this will be executed in UI thread
-                        create_and_display_data_item(document_window,
-                                                     camera_data_list[0],
-                                                     scan_data_list,
-                                                     self.__camera_hardware_source)
+                        for data_and_metadata in camera_data_list + scan_data_list:
+                            create_and_display_data_item(document_window, data_and_metadata)
 
                     # queue the task to be executed in UI thread
                     document_window.queue_task(create_and_display_data_item_task)

@@ -646,7 +646,10 @@ class ScanHardwareSource(HardwareSource.HardwareSource):
 
                     [s1a, s2a, s3a], etc.
                     """
-                    return new_scan_data_list, [Core.function_vstack(data_and_metadata_list)]
+                    camera_data_and_metadata = Core.function_vstack(data_and_metadata_list)
+                    camera_metadata = data_and_metadata_list[0].metadata
+                    camera_data_and_metadata._set_metadata(camera_metadata)
+                    return new_scan_data_list, [camera_data_and_metadata]
             finally:
                 self.__stem_controller._exit_synchronized_state(self, camera=camera)
                 self.__grab_synchronized_is_scanning = False
