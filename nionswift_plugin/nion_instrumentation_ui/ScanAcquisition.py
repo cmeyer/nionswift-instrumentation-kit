@@ -20,10 +20,13 @@ from nion.typeshed import UI_1_0 as UserInterface
 from nion.utils import Binding
 from nion.utils import Converter
 from nion.utils import Event
+from nion.utils import Geometry
 from nion.utils import Model
 from . import HardwareSourceChoice
 
 _ = gettext.gettext
+
+title_base = _("Spectrum Image")
 
 
 def create_and_display_data_item(document_window, data_and_metadata: DataAndMetadata.DataAndMetadata) -> None:
@@ -37,7 +40,7 @@ def create_and_display_data_item(document_window, data_and_metadata: DataAndMeta
     # set the title
     channel_name = data_and_metadata.metadata.get("hardware_source", dict()).get("channel_name", data_and_metadata.metadata.get("hardware_source", dict()).get("hardware_source_name", "Data"))
     dimension_str = (" " + " x ".join([str(d) for d in data_and_metadata.collection_dimension_shape])) if data_and_metadata.is_collection else str()
-    data_item.title = f"{_('Spectrum Image')}{dimension_str} ({channel_name})"
+    data_item.title = f"{title_base}{dimension_str} ({channel_name})"
 
     # if the last dimension is 1, squeeze the data (1D SI)
     if data_and_metadata.data_shape[0] == 1:
@@ -144,19 +147,65 @@ class ScanAcquisitionController:
         if sum_frames:
             camera_frame_parameters["processing"] = "sum_project"
 
+        # scan_size, camera_readout_size, channel_id_list = scan_hardware_source.grab_synchronized_prepare(
+        #     scan_frame_parameters=scan_frame_parameters,
+        #     camera=camera_hardware_source,
+        #     camera_frame_parameters=camera_frame_parameters)
+
+        data_item = DataItem.DataItem(large_format=True)
+        channel_name = camera_hardware_source.display_name
+        data_item.title = f"{title_base} ({channel_name})"
+        self.__document_controller.library._document_model.append_data_item(data_item)
+        self.__document_controller.display_data_item(Facade.DataItem(data_item))
+
+        class CameraDataChannel:
+            def __init__(self, document_model, data_item: DataItem.DataItem):
+                self.__document_model = document_model
+                self.__data_item = data_item
+                self.__data_item_transaction = None
+                self.__data_and_metadata = None
+
+            def start(self) -> None:
+                self.__data_item.increment_data_ref_count()
+                self.__data_item_transaction = self.__document_model.item_transaction(self.__data_item)
+                self.__document_model.begin_data_item_live(self.__data_item)
+
+            def update(self, data_and_metadata: DataAndMetadata.DataAndMetadata, state: str, data_shape: Geometry.IntSize, dest_sub_area: Geometry.IntRect, sub_area: Geometry.IntRect, view_id) -> None:
+                print(f"update {data_and_metadata.data_shape=} {state=} {data_shape=} {dest_sub_area=} {sub_area=} {view_id=}")
+                md = DataAndMetadata.DataMetadata(
+                    (tuple(data_shape) + data_and_metadata.data_shape[2:], data_and_metadata.data_dtype),
+                    data_and_metadata.intensity_calibration,
+                    data_and_metadata.dimensional_calibrations, metadata=data_and_metadata.metadata,
+                    data_descriptor=DataAndMetadata.DataDescriptor(False, 2, len(data_and_metadata.data_shape) - 2))
+                src = sub_area.slice + (Ellipsis,)
+                dst = dest_sub_area.slice + (Ellipsis,)
+                self.__document_model.update_data_item_partial(self.__data_item, md, data_and_metadata, src, dst)
+
+            def stop(self) -> None:
+                if self.__data_item_transaction:
+                    self.__data_item_transaction.close()
+                    self.__data_item_transaction = None
+                    self.__document_model.end_data_item_live(self.__data_item)
+                    self.__data_item.decrement_data_ref_count()
+
+        camera_data_channel = CameraDataChannel(self.__document_controller.library._document_model, data_item)
+        camera_data_channel.start()
+
         def grab_synchronized():
             self.acquisition_state_changed_event.fire(SequenceState.scanning)
             try:
                 combined_data = scan_hardware_source.grab_synchronized(scan_frame_parameters=scan_frame_parameters,
                                                                        camera=camera_hardware_source,
-                                                                       camera_frame_parameters=camera_frame_parameters)
+                                                                       camera_frame_parameters=camera_frame_parameters,
+                                                                       camera_data_channel=camera_data_channel)
                 if combined_data is not None:
                     scan_data_list, camera_data_list = combined_data
 
                     def create_and_display_data_item_task():
                         # this will be executed in UI thread
-                        for data_and_metadata in camera_data_list + scan_data_list:
+                        for data_and_metadata in scan_data_list:
                             create_and_display_data_item(document_window, data_and_metadata)
+                        camera_data_channel.start()
 
                     # queue the task to be executed in UI thread
                     document_window.queue_task(create_and_display_data_item_task)
