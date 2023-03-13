@@ -1242,6 +1242,7 @@ class CameraHardwareSource(HardwareSource.HardwareSource, typing.Protocol):
 
     profile_changed_event: Event.Event
     frame_parameters_changed_event: Event.Event
+    current_frame_parameters_changed_event: Event.Event
     log_messages_event: Event.Event
 
 
@@ -1323,6 +1324,7 @@ class CameraHardwareSource2(HardwareSource.ConcreteHardwareSource, CameraHardwar
         # define deprecated events. both are used in camera control panel. frame_parameter_changed_event used in scan acquisition.
         self.profile_changed_event = Event.Event()
         self.frame_parameters_changed_event = Event.Event()
+        self.current_frame_parameters_changed_event = Event.Event()
 
         self.__profile_changed_event_listener = self.__camera_settings.profile_changed_event.listen(self.profile_changed_event.fire)
         self.__frame_parameters_changed_event_listener = self.__camera_settings.frame_parameters_changed_event.listen(self.frame_parameters_changed_event.fire)
@@ -1724,6 +1726,7 @@ class CameraHardwareSource2(HardwareSource.ConcreteHardwareSource, CameraHardwar
         if isinstance(acquisition_task, CameraAcquisitionTask):
             acquisition_task.set_frame_parameters(CameraFrameParameters(frame_parameters.as_dict()))
         self.__frame_parameters = CameraFrameParameters(frame_parameters.as_dict())
+        self.current_frame_parameters_changed_event.fire(self.__frame_parameters)
 
     def set_current_frame_parameters(self, frame_parameters: HardwareSource.FrameParameters) -> None:
         frame_parameters = CameraFrameParameters(frame_parameters.as_dict())
@@ -1922,8 +1925,11 @@ class CameraHardwareSource3(HardwareSource.ConcreteHardwareSource, CameraHardwar
         if self.processor:
             self.add_channel_processor(0, self.processor)
 
-        # define deprecated events. both are used in camera control panel. frame_parameter_changed_event used in scan acquisition.
+        # define deprecated events. used in camera control panel.
         self.profile_changed_event = Event.Event()
+
+        # frame_parameters_changed_event is used in scan acquisition. it is fired when the frame parameters change.
+        self.current_frame_parameters_changed_event = Event.Event()
         self.frame_parameters_changed_event = Event.Event()
 
         self.__profile_changed_event_listener = self.__camera_settings.profile_changed_event.listen(self.profile_changed_event.fire)
@@ -2236,6 +2242,7 @@ class CameraHardwareSource3(HardwareSource.ConcreteHardwareSource, CameraHardwar
         if isinstance(acquisition_task, CameraAcquisitionTask):
             acquisition_task.set_frame_parameters(CameraFrameParameters(frame_parameters.as_dict()))
         self.__frame_parameters = CameraFrameParameters(frame_parameters.as_dict())
+        self.current_frame_parameters_changed_event.fire(self.__frame_parameters)
 
     def set_current_frame_parameters(self, frame_parameters: HardwareSource.FrameParameters) -> None:
         frame_parameters = CameraFrameParameters(frame_parameters.as_dict())
